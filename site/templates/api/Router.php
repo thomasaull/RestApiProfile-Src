@@ -29,7 +29,7 @@ $content = Router::go(function(\FastRoute\RouteCollector $r)
   $r->addGroup('/test', function (\FastRoute\RouteCollector $r)
   {
     $r->addRoute('GET', '', Test::class . '@getSomeData');
-    // $r->addRoute('POST', '/', ApiTest::class . '@postTest');
+    $r->addRoute('POST', '', Test::class . '@postWithSomeData');
   });
 });
 
