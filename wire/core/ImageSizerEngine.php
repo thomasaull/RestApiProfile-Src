@@ -8,6 +8,7 @@
  *
  * @property bool $autoRotation
  * @property bool $upscaling
+ * @property bool $interlace
  * @property array|string|bool $cropping
  * @property int $quality
  * @property string $sharpening
@@ -60,6 +61,14 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	protected $quality = 90;
 
 	/**
+	 * Image interlace setting, false or true
+	 *
+	 * @var bool
+	 *
+	 */
+	protected $interlace = false;
+
+	/**
 	 * Information about the image (width/height)
 	 *
 	 * @var array
@@ -100,9 +109,11 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * Possible values: northwest, north, northeast, west, center, east, southwest, south, southeast
 	 *    or TRUE to crop to center, or FALSE to disable cropping.
+	 * Or array where index 0 is % or px from left, and index 1 is % or px from top. Percent is assumed if
+	 *    values are number strings that end with %. Pixels are assumed of values are just integers. 
 	 * Default is: TRUE
 	 *
-	 * @var bool
+	 * @var bool|array
 	 *
 	 */
 	protected $cropping = true;
@@ -206,6 +217,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 		'autoRotation',
 		'upscaling',
 		'cropping',
+		'interlace', 
 		'quality',
 		'sharpening',
 		'defaultGamma',
@@ -387,6 +399,36 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 */
 	abstract protected function processResize($srcFilename, $dstFilename, $fullWidth, $fullHeight, $finalWidth, $finalHeight);
+
+	/**
+	 * Process rotate of an image
+	 * 
+	 * @param string $srcFilename
+	 * @param string $dstFilename
+	 * @param int $degrees Clockwise degrees, i.e. 90, 180, 270, -90, -180, -270
+	 * @return bool
+	 * 
+	 */
+	protected function processRotate($srcFilename, $dstFilename, $degrees) { 
+		if($srcFilename && $dstFilename && $degrees) {}
+		$this->error('rotate not implemented for ' . $this->className());
+		return false;
+	}
+
+	/**
+	 * Process vertical or horizontal flip of an image
+	 * 
+	 * @param string $srcFilename
+	 * @param string $dstFilename
+	 * @param bool $flipVertical True if flip is vertical, false if flip is horizontal
+	 * @return bool
+	 * 
+	 */
+	protected function processFlip($srcFilename, $dstFilename, $flipVertical) {
+		if($srcFilename && $dstFilename && $flipVertical) {}
+		$this->error('flip not implemented for ' . $this->className());
+		return false;
+	}
 
 	/**
 	 * Get array of image file extensions this ImageSizerModule can process
@@ -794,11 +836,13 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 				if(isset($value[$v])) $$v = $value[$v];
 			}
 		}
-
+		
 		foreach(array('x', 'y', 'w', 'h') as $k) {
-			$v = isset($$k) ? $$k : -1;
-			if(!is_int($v) || $v < 0) throw new WireException("Missing or wrong param $k for ImageSizer-cropExtra!");
-			if(('w' == $k || 'h' == $k) && 0 == $v) throw new WireException("Wrong param $k for ImageSizer-cropExtra!");
+			$v = (int) (isset($$k) ? $$k : -1);
+			if(!$v && $k == 'w' && $h > 0) $v = $this->getProportionalWidth((int) $h); 
+			if(!$v && $k == 'h' && $w > 0) $v = $this->getProportionalHeight((int) $w); 
+			if($v < 0) throw new WireException("Missing or wrong param $k=$v for ImageSizer-cropExtra! " . print_r($value, true));
+			if(('w' == $k || 'h' == $k) && 0 == $v) throw new WireException("Wrong param $k=$v for ImageSizer-cropExtra! " . print_r($value, true));
 		}
 
 		$this->cropExtra = array($x, $y, $w, $h);
@@ -908,6 +952,19 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 */
 	public function setUpscaling($value = true) {
 		$this->upscaling = $this->getBooleanValue($value);
+		return $this;
+	}
+	
+	/**
+	 * Turn on/off interlace 
+	 *
+	 * @param bool $value Whether to upscale or not (default = true)
+	 *
+	 * @return $this
+	 *
+	 */
+	public function setInterlace($value = true) {
+		$this->interlace = $this->getBooleanValue($value);
 		return $this;
 	}
 
@@ -1059,6 +1116,9 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 				case 'upscaling':
 					$this->setUpscaling($value);
 					break;
+				case 'interlace':
+					$this->setInterlace($value);
+					break;
 				case 'sharpening':
 					$this->setSharpening($value);
 					break;
@@ -1126,6 +1186,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 			'quality' => $this->quality,
 			'cropping' => $this->cropping,
 			'upscaling' => $this->upscaling,
+			'interlace' => $this->interlace, 
 			'autoRotation' => $this->autoRotation,
 			'sharpening' => $this->sharpening,
 			'defaultGamma' => $this->defaultGamma,
@@ -1327,7 +1388,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	protected function getCropDimensions(&$w1, &$h1, $gdWidth, $targetWidth, $gdHeight, $targetHeight) {
 
 		if(is_string($this->cropping)) {
-
+			// calculate from 8 named cropping points 
 			switch($this->cropping) {
 				case 'nw':
 					$w1 = 0;
@@ -1361,20 +1422,45 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 			}
 
 		} else if(is_array($this->cropping)) {
+			// calculate from specific percent or pixels from left and top
+			// $this->cropping is an array with the following:
+			// index 0 represents % or pixels from left
+			// index 1 represents % or pixels from top
 			// @interrobang + @u-nikos
-			if(strpos($this->cropping[0], '%') === false) $pointX = (int) $this->cropping[0];
-			else $pointX = $gdWidth * ((int) $this->cropping[0] / 100);
+			if(strpos($this->cropping[0], '%') === false) {
+				$pointX = (int) $this->cropping[0];
+			} else {
+				$pointX = $gdWidth * ((int) $this->cropping[0] / 100);
+			}
 
-			if(strpos($this->cropping[1], '%') === false) $pointY = (int) $this->cropping[1];
-			else $pointY = $gdHeight * ((int) $this->cropping[1] / 100);
+			if(strpos($this->cropping[1], '%') === false) {
+				$pointY = (int) $this->cropping[1];
+			} else {
+				$pointY = $gdHeight * ((int) $this->cropping[1] / 100);
+			}
+		
+			/*
+			if(isset($this->cropping[2]) && $this->cropping[2] > 1) {
+				// zoom percent (2-100)
+				$zoom = (int) $this->cropping[2];
+			}
+			*/
 
-			if($pointX < $targetWidth / 2) $w1 = 0;
-			else if($pointX > ($gdWidth - $targetWidth / 2)) $w1 = $gdWidth - $targetWidth;
-			else $w1 = $pointX - $targetWidth / 2;
+			if($pointX < $targetWidth / 2) {
+				$w1 = 0;
+			} else if($pointX > ($gdWidth - $targetWidth / 2)) {
+				$w1 = $gdWidth - $targetWidth;
+			} else {
+				$w1 = $pointX - $targetWidth / 2;
+			}
 
-			if($pointY < $targetHeight / 2) $h1 = 0;
-			else if($pointY > ($gdHeight - $targetHeight / 2)) $h1 = $gdHeight - $targetHeight;
-			else $h1 = $pointY - $targetHeight / 2;
+			if($pointY < $targetHeight / 2) {
+				$h1 = 0;
+			} else if($pointY > ($gdHeight - $targetHeight / 2)) {
+				$h1 = $gdHeight - $targetHeight;
+			} else {
+				$h1 = $pointY - $targetHeight / 2;
+			}
 		}
 
 	}
@@ -1440,6 +1526,118 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 		$this->loadImageInfo($this->filename, true);
 
 		return true;
+	}
+
+	/**
+	 * Just rotate image by number of degrees
+	 * 
+	 * @param int $degrees
+	 * @param string $dstFilename Optional destination filename. If not present, source will be overwritten. 
+	 * @return bool True on success, false on fail
+	 * 
+	 */
+	public function rotate($degrees, $dstFilename = '') {
+
+		$degrees = (int) $degrees;
+		$srcFilename = $this->filename;
+		
+		if(empty($dstFilename)) $dstFilename = $srcFilename;
+		
+		if($degrees > 360) $degrees = 360 - $degrees;
+		if($degrees < -360) $degrees = $degrees - 360;
+
+		if($degrees == 0 || $degrees == 360 || $degrees == -360) {
+			if($dstFilename != $this->filename) wireCopy($this->filename, $dstFilename);
+			return true;
+		}
+
+		if($srcFilename == $dstFilename) {
+			// src and dest are the same, so use a temporary file 
+			$n = 1;
+			do {
+				$tmpFilename = dirname($dstFilename) . "/.ise$n-" . basename($dstFilename);
+			} while(file_exists($tmpFilename) && $n++); 
+		} else {
+			// src and dest are different files
+			$tmpFilename = $dstFilename;
+		}
+		
+		$result = $this->processRotate($srcFilename, $tmpFilename, $degrees);
+		
+		if($result) {
+			// success
+			if($tmpFilename != $dstFilename) {
+				if(is_file($dstFilename)) unlink($dstFilename);
+				rename($tmpFilename, $dstFilename);
+			}
+			wireChmod($dstFilename);
+		} else {
+			// fail
+			if(is_file($tmpFilename)) unlink($tmpFilename);	
+		}
+		
+		return $result;
+	}
+
+	/**
+	 * Flip vertically 
+	 * 
+	 * @param string $dstFilename
+	 * @return bool
+	 * 
+	 */
+	public function flipVertical($dstFilename = '') {
+		if(empty($dstFilename)) $dstFilename = $this->filename;
+		return $this->processFlip($this->filename, $dstFilename, 'vertical'); 
+	}
+
+	/**
+	 * Flip horizontally 
+	 * 
+	 * @param string $dstFilename
+	 * @return bool
+	 * 
+	 */	
+	public function flipHorizontal($dstFilename = '') {
+		if(empty($dstFilename)) $dstFilename = $this->filename;
+		return $this->processFlip($this->filename, $dstFilename, 'horizontal'); 
+	}
+
+	/**
+	 * Flip both vertically and horizontally
+	 * 
+	 * @param string $dstFilename
+	 * @return bool
+	 * 
+	 */
+	public function flipBoth($dstFilename = '') {
+		if(empty($dstFilename)) $dstFilename = $this->filename;
+		return $this->processFlip($this->filename, $dstFilename, 'both');
+	}
+	
+	/**
+	 * Convert image to greyscale
+	 *
+	 * @param string $dstFilename If different from source file
+	 * @return bool
+	 *
+	 */
+	public function convertToGreyscale($dstFilename = '') {
+		if($dstFilename) {}
+		return false;
+	}
+
+	/**
+	 * Convert image to sepia
+	 *
+	 * @param string $dstFilename If different from source file
+	 * @param float|int $sepia Sepia value
+	 * @return bool
+	 *
+	 */
+	public function convertToSepia($dstFilename = '', $sepia = 55) {
+		if($dstFilename && $sepia) {}
+		return false;
 	}
 
 	/**

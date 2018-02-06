@@ -30,6 +30,9 @@ function InputfieldImage($) {
 	// grid items to retry for sizing by setGridSize() methods	
 	var retryGridItems = [];
 
+	// whether or not zoom-focus feature is available
+	var useZoomFocus = false;
+
 	/**
 	 * Whether or not AJAX drag/drop upload is allowed?
 	 * 
@@ -125,7 +128,7 @@ function InputfieldImage($) {
 				});
 				$el.removeClass('InputfieldImageSorting');
 			},
-			cancel: ".InputfieldImageEdit"
+			cancel: ".InputfieldImageEdit,.focusArea,input,textarea,button,select,option"
 		};
 
 		$el.sortable(sortableOptions);
@@ -232,8 +235,9 @@ function InputfieldImage($) {
 	function checkInputfieldWidth($inputfield) {
 		
 		var narrowItems = [];
+		var mediumItems = [];
 		var wideItems = [];
-		var ni = 0, wi = 0;
+		var ni = 0, mi = 0, wi = 0;
 		var $inputfields;
 	
 		if(typeof $inputfield == "undefined") {
@@ -242,7 +246,7 @@ function InputfieldImage($) {
 			$inputfields = $inputfield;
 		}
 	
-		$inputfields.removeClass('InputfieldImageNarrow');
+		$inputfields.removeClass('InputfieldImageNarrow InputfieldImageMedium InputfieldImageWide');
 		
 		$inputfields.each(function() {
 			var $item = $(this);
@@ -251,12 +255,26 @@ function InputfieldImage($) {
 			if(width <= 500) {
 				narrowItems[ni] = $item;
 				ni++;
+			} else if(width <= 900) {
+				mediumItems[mi] = $item;
+				mi++;
+			} else {
+				wideItems[wi] = $item;
+				wi++;
 			}
 		});
 		
 		for(var n = 0; n < ni; n++) {
 			var $item = narrowItems[n];	
 			$item.addClass('InputfieldImageNarrow');
+		}
+		for(var n = 0; n < mi; n++) {
+			var $item = mediumItems[n];
+			$item.addClass('InputfieldImageMedium');
+		}
+		for(var n = 0; n < wi; n++) {
+			var $item = wideItems[n];
+			$item.addClass('InputfieldImageWide');
 		}
 	}
 
@@ -265,6 +283,10 @@ function InputfieldImage($) {
 	 * 
 	 */
 	function windowResize() {
+		$('.focusArea.focusActive').each(function() {
+			var $edit = $(this).closest('.InputfieldImageEdit, .gridImage'); 
+			if($edit.length) stopFocus($edit);
+		}); 
 		updateGrid();
 		checkInputfieldWidth();
 	}
@@ -303,11 +325,10 @@ function InputfieldImage($) {
 	 */
 	function setupEdit($el, $edit) {
 		
-		if($el.closest('.InputfieldImageEditAll').length) return;
+		if($el.closest('.InputfieldImageEditAll').length) return; // edit all mode
 		
 		var $img = $edit.find(".InputfieldImageEdit__image");
 		var $thumb = $el.find("img");
-		
 		
 		$img.attr({
 			src: $thumb.attr("data-original"),
@@ -333,7 +354,6 @@ function InputfieldImage($) {
 			.find("img")
 			.add($img)
 			.magnificPopup(options);
-			//.addClass('magnificInit');
 
 		// move all of the .ImageData elements to the edit panel
 		$edit.find(".InputfieldImageEdit__edit")
@@ -342,12 +362,255 @@ function InputfieldImage($) {
 	}
 
 	/**
+	 * Setup image for a draggable focus area and optional zoom slider
+	 * 
+	 * @param $edit Image editor container (.InputfieldImageEdit or .gridImage)
+	 * 
+	 */
+	function startFocus($edit) {
+		
+		var $img, $el, $thumb, $input, $focusArea, $focusCircle, $inputfield, 
+			focusData = null, gridSize, mode, 
+			$zoomSlider, $zoomBox, lastZoomPercent = 0, 
+			lastZoomVisual = 0, startZoomVisual = -1;
+		
+		$inputfield = $edit.closest('.Inputfield');
+		gridSize = getCookieData($inputfield, 'size');
+		mode = getCookieData($inputfield, 'mode');
+		
+		if($edit.hasClass('gridImage')) {
+			// list mode
+			$el = $edit;
+			$img = $edit.find('.gridImage__overflow').find('img');
+			$thumb = $img;
+		} else {
+			// thumbnail click for editor mode
+			$el = $('#' + $edit.attr('data-for'));
+			$img = $edit.find('.InputfieldImageEdit__image');
+			$thumb = $el.find('.gridImage__overflow').find('img');
+		}
+	
+		// get the focus object, optionally for a specific focusStr
+		function getFocus(focusStr) {
+			if(typeof focusStr == "undefined") {
+				if(focusData !== null) return focusData;
+				var $input = $edit.find('.InputfieldImageFocus');
+				var focusStr = $input.val();
+			}
+			var a = focusStr.split(' ');
+			var data = {
+				'top': (typeof a[0] == "undefined" ? 50.0 : parseFloat(a[0])),
+				'left': (typeof a[1] == "undefined" ? 50.0 : parseFloat(a[1])),
+				'zoom': (typeof a[2] == "undefined" ? 0 : parseInt(a[2]))
+			};
+			focusData = data;
+			return data;
+		}
+	
+		// get focus string
+		function getFocusStr(focusObj) {
+			if(typeof focusObj == "undefined") focusObj = getFocus();
+			return focusObj.top + ' ' + focusObj.left + ' ' + focusObj.zoom;
+		}
+	
+		// get single focus property: top left or zoom
+		function getFocusProperty(property) {
+			var focus = getFocus();	
+			return focus[property];
+		}
+
+		// set focus for top left and zoom
+		function setFocus(focusObj) {
+			focusData = focusObj;
+			var focusStr = focusObj.top + ' ' + focusObj.left + ' ' + focusObj.zoom;
+			$thumb.attr('data-focus', focusStr); // for consumption outside startFocus()
+			$input = $edit.find('.InputfieldImageFocus');
+			if(focusStr != $input.val()) {
+				$input.val(focusStr).trigger('change');
+			}
+		}
+
+		// set just one focus property (top, left or zoom)
+		function setFocusProperty(property, value) {
+			var focus = getFocus();
+			focus[property] = value;
+			setFocus(focus);
+		}
+		
+		 // Set the position of the draggable focus item
+		function setFocusDragPosition() {
+			var focus = getFocus();
+			var $overlay = $focusCircle.parent();
+			var w = $overlay.width();
+			var h = $overlay.height();
+			var x = Math.round(((focus.left / 100) * w) - ($focusCircle.width() / 1.7));
+			var y = Math.round(((focus.top / 100) * h) - ($focusCircle.height() / 2.3));
+			if(x < 0) x = 0;
+			if(y < 0) y = 0;
+			$focusCircle.css({
+				'top': y + 'px',
+				'left': x + 'px'
+			});
+		}
+	
+		// setup focus area (div that contains all the focus stuff)
+		$focusArea = $img.siblings('.focusArea'); 
+		if(!$focusArea.length) {
+			$focusArea = $('<div />').addClass('focusArea');
+			$img.after($focusArea);
+		}
+		$focusArea.css({
+			'height': $img.height() + 'px',
+			'width': $img.width() + 'px'
+		}).addClass('focusActive');
+
+		// set the draggable circle for focus
+		$focusCircle = $focusArea.find('.focusCircle'); 
+		if(!$focusCircle.length) {
+			$focusCircle = $("<div />").addClass('focusCircle');
+			$focusArea.append($focusCircle);
+		}
+	
+		// indicate active state for focusing, used by stopFocus()
+		$img.parent().addClass('focusWrap');
+	
+		// set the initial position for the focus circle 
+		setFocusDragPosition();
+	
+		// function called whenever the slider is moved
+		var zoomSlide = function(zoomPercent) {
+			if(typeof zoomPercent == "undefined") zoomPercent = lastZoomPercent;
+			lastZoomPercent = zoomPercent;
+			var w = (100 - zoomPercent) + '%';
+			$zoomBox.width(w);
+			var zoomBoxSize = $zoomBox.width();
+			var focusCircleSize = $focusCircle.height();
+			$zoomBox.height(zoomBoxSize)
+
+			var zoom = zoomPercent;
+			var top = parseInt($focusCircle.css('top')); // top of drag item
+			top += Math.floor(focusCircleSize / 2);  // plus half the height of drag item
+			top -= Math.ceil(zoomBoxSize / 2) - 3; // minus half the height of the zoom box (-3)
+
+			var left = parseInt($focusCircle.css('left'));
+			left += Math.floor(focusCircleSize / 2);
+			left -= Math.ceil(zoomBoxSize / 2) - 3;
+
+			if(top < 0) top = 0;
+			if(left < 0) left = 0;
+			// constrain to corners
+			if(top + zoomBoxSize > $focusArea.height()) top = $focusArea.height() - zoomBoxSize;
+			if(left + zoomBoxSize > $focusArea.width()) left = $focusArea.width() - zoomBoxSize;
+
+			$zoomBox.css({
+				top: top + 'px',
+				left: left + 'px'
+			});
+
+			setFocusProperty('zoom', zoomPercent);
+
+			// determine when to visually start showing zoom (in grid mode)
+			var zoomVisual = zoomPercent;
+			if(zoomBoxSize > $img.height() || zoomBoxSize > $img.width()) {
+				zoomVisual = 0;
+			} else {
+				if(!lastZoomVisual) startZoomVisual = zoomVisual;
+				zoomVisual = (zoomVisual - startZoomVisual)+1;
+			}
+			if(mode == 'grid') setGridSizeItem($thumb.parent(), gridSize, false, zoomVisual);
+			lastZoomVisual = zoomVisual;
+			/*
+			console.log('lastZoomVisual=' + lastZoomVisual + ', startZoomVisual=' + startZoomVisual + 
+				', img.height=' + $img.height() + ', img.width=' + $img.width() + 
+				', zoomBoxSize=' + zoomBoxSize + ', zoomVisual=' + zoomVisual);
+			*/
+		}; // zoomSlide
+	
+		// function called when the focus item is dragged
+		var dragEvent = function(event, ui) {
+			var $this = $(this);
+			var w = $this.parent().width();
+			var h = $this.parent().height();
+			var t = ui.position.top > 0 ? ui.position.top + ($this.width() / 2) : 0;
+			var l = ui.position.left > 0 ? ui.position.left + ($this.height() / 2) : 0;
+			var oldFocus = getFocus();
+			var newFocus = {
+				'top': t > 0 ? ((t / h) * 100) : 0,
+				'left': l > 0 ? ((l / w) * 100) : 0,
+				'zoom': getFocusProperty('zoom')
+			};
+			setFocus(newFocus);
+			if(useZoomFocus) {
+				zoomSlide();
+			} else if(mode == 'grid') {
+				setGridSizeItem($thumb.parent(), gridSize, false);
+			}
+		}; // dragEvent
+	
+		// make draggable and attach events
+		$focusCircle.draggable({
+			containment: 'parent',
+			drag: dragEvent,
+			stop: dragEvent
+		});
+
+		if(useZoomFocus) {
+			// setup the focus zoom slider
+			var zoom = getFocusProperty('zoom');
+			$zoomSlider = $("<div />").addClass('focusZoomSlider').css({
+				'margin-top': '5px'
+			});
+			$zoomBox = $("<div />").addClass('focusZoomBox').css({
+				'position': 'absolute',
+				'background': 'rgba(0,0,0,0.5)',
+				'box-shadow': '0 0 20px rgba(0,0,0,.9)'
+			});
+			$focusArea.prepend($zoomBox);
+			$img.after($zoomSlider);
+			$thumb.attr('src', $img.attr('src'));
+			$zoomSlider.slider({
+				min: 0,
+				max: 80,
+				value: zoom,
+				range: 'max',
+				slide: function(event, ui) {
+					zoomSlide(ui.value); 
+				}
+			});
+			zoomSlide(zoom);
+		} else {
+			$focusArea.css('background-color', 'rgba(0,0,0,0.5)'); 
+		}
+
+	}
+	
+	function stopFocus($edit) {
+		$focusCircle = $edit.find('.focusCircle');
+		if($focusCircle.length) {
+			var $focusWrap = $focusCircle.closest('.focusWrap');
+			$focusWrap.find('.focusZoomSlider').slider('destroy').remove();
+			$focusWrap.find('.focusZoomBox').remove();
+			$focusWrap.removeClass('focusWrap');
+			$focusCircle.draggable('destroy');
+			$focusCircle.parent().removeClass('focusActive');
+			$focusCircle.remove();
+			var $button = $edit.find('.InputfieldImageButtonFocus');
+			if($button.length) {
+				$icon = $button.find('i');
+				$icon.removeClass('focusIconActive').toggleClass($icon.attr('data-toggle'));
+			}
+		}
+	}
+	
+	/**
 	 * Tear down the InputfieldImageEdit panel
 	 *
 	 * @param $edit
 	 *
 	 */
 	function tearDownEdit($edit) {
+		stopFocus($edit);
+		$edit.off('click', '.InputfieldImageButtonFocus');
 		$inputArea = $edit.find(".InputfieldImageEdit__edit");
 		if($inputArea.children().not(".InputfieldFileSort").length) {
 			var $items = $inputArea.children();
@@ -502,7 +765,24 @@ function InputfieldImage($) {
 			};
 			$.magnificPopup.open(options);
 			return true;
-		});
+			
+		}).on('click', '.InputfieldImageButtonFocus', function() {
+			
+			var $button = $(this);
+			var $icon = $button.find('i');
+			var $edit = $button.closest('.InputfieldImageEdit, .gridImage'); 
+			var $focusCircle = $edit.find('.focusCircle');
+			
+			if($focusCircle.length) {
+				// stops focus
+				stopFocus($edit);
+			} else {
+				// starts focus
+				startFocus($edit);
+				$icon.addClass('focusIconActive');
+				$icon.toggleClass($icon.attr('data-toggle'));
+			}
+		}); 
 
 		$(document).on("click", function(e) {
 			var $el = $(e.target);
@@ -647,8 +927,14 @@ function InputfieldImage($) {
 		pct = Math.floor(pct);
 		$inputfield.find(".gridImage__overflow").each(function() {
 			var dataPct = 100 - pct; 
-			$(this).css('width', pct + '%');
-			$(this).siblings('.ImageData').css('width', dataPct + '%');
+			var $this = $(this);
+			$this.css('width', pct + '%');
+			$this.siblings('.ImageData').css('width', dataPct + '%');
+			$this.find('img').css({
+				top: 0,
+				left: 0,
+				transform: 'none',
+			});
 		});
 		setCookieData($inputfield, 'listSize', pct);
 	}
@@ -703,9 +989,10 @@ function InputfieldImage($) {
 	 * @param $item
 	 * @param gridSize
 	 * @param ragged
+	 * @param zoom
 	 * 
 	 */
-	function setGridSizeItem($item, gridSize, ragged) {
+	function setGridSizeItem($item, gridSize, ragged, zoom) {
 		
 		if($item.hasClass('gridImage__overflow')) {
 			var $img = $item.children('img');	
@@ -721,23 +1008,109 @@ function InputfieldImage($) {
 			$item.width('auto').height('auto');
 			return;
 		}
+		
+		if(typeof zoom == "undefined") zoom = 0;
 
+		var focus = {};
 		var w = $img.width();
 		var h = $img.height();
-		if(!w) w = parseInt($img.attr('data-w'));
-		if(!h) h = parseInt($img.attr('data-h'));
+		var dataW = parseInt($img.attr('data-w'));
+		var dataH = parseInt($img.attr('data-h'));
+		if(!w) w = dataW;
+		if(!h) h = dataH;
+		
+		if(!ragged) {
+			var focusStr = $img.attr('data-focus');
+			if(typeof focusStr == "undefined") focusStr = '50.0 50.0 0';
+			var focusArray = focusStr.split(' ');
+			focus = { 
+				top: parseFloat(focusArray[0]), 
+				left: parseFloat(focusArray[1]), 
+				zoom: parseInt(focusArray[2]) 
+			};
+		}	
 		
 		if(ragged) {
-			$img.css('max-height', '100%').css('max-width', 'none');
+			// show full thumbnail (not square)
 			$img.attr('height', gridSize).removeAttr('width');
+			$img.css({
+				'max-height': '100%',
+				'max-width': 'none',
+				'top': '50%',
+				'left': '50%',
+				'transform': 'translate3d(-50%, -50%, 0)'
+			});
+			
+		} else if(zoom > 0 && useZoomFocus) { 
+			// focus with zoom 
+			if(w >= h) {
+				$img.attr('height', gridSize).removeAttr('width');
+				var maxHeight = '100%';
+				var maxWidth = 'none';
+			} else {
+				var maxHeight = 'none';
+				var maxWidth = '100%';
+				$img.attr('width', gridSize).removeAttr('height');
+			}
+			var top = focus.top;
+			var left = focus.left;
+			var scale = 1 + (zoom / 25); //(zoom * 0.037);
+			if(scale < 0) scale = 0;
+			if(left < 1.0) left = 0.001;
+			if(top < 1.0) top = 0.001;
+			if(left >= 55) {
+				left += (left * 0.15);
+			} else if(left <= 45) {
+				left -= (left * 0.15); 
+			}
+			if(top > 50) {
+				top += (top * 0.1); 
+			} else if(top < 50) {
+				top -= (top * 0.1); 
+			}
+			if(left > 100) left = 100;
+			if(top > 100) top = 100;
+			$img.css({
+				'max-height': maxHeight,
+				'max-width': maxWidth, 
+				'top': top + '%',
+				'left': left + '%',
+				'transform-origin': 'top left', 
+				'transform': 'scale(' + scale + ') translate3d(-' + (left) + '%, -' + (top) + '%, 0)'
+			});
+			// console.log("top=" + top + ", left=" + left + ", scale=" + scale); 
+
 		} else if(w >= h) {
-			$img.css('max-height', '100%').css('max-width', 'none');
+			// image width greater than height
 			$img.attr('height', gridSize).removeAttr('width');
+			if(focus.left < 1) focus.left = 0.001;
+			$img.css({
+				'max-height': '100%',
+				'max-width': 'none',
+				'top': '50%',
+				'left': focus.left + '%',
+				'transform': 'translate3d(-' + focus.left + '%, -50%, 0)'
+			});
 		} else if(h > w) {
-			$img.css('max-height', 'none').css('max-width', '100%');
+			// image height greater tahn width
 			$img.attr('width', gridSize).removeAttr('height');
+			if(focus.top < 1) focus.top = 0.001;
+			$img.css({
+				'max-height': 'none',
+				'max-width': '100%',
+				'top': focus.top + '%',
+				'left': '50%',
+				'transform': 'translate3d(-50%, -' + focus.top + '%, 0)'
+			});
 		} else {
-			$img.css('max-height', '100%').css('max-width', 'none');
+			// perfectly square image
+			$img.css({
+				'max-height': '100%',
+				'max-width': 'none',
+				'top': '50%',
+				'left': '50%',
+				'transform': 'translate3d(-50%, -50%, 0)'
+			});
 			$img.removeAttr('width').attr('height', gridSize);
 		}
 
@@ -793,8 +1166,10 @@ function InputfieldImage($) {
 			var $inputfield = $a.closest('.Inputfield');
 			var href = $a.attr('href');
 			var size;
+			var $aPrev = $a.parent().children('.' + activeClass);
+			var hrefPrev = $aPrev.attr('href');
 			
-			$a.parent().children('.' + activeClass).removeClass(activeClass);
+			$aPrev.removeClass(activeClass);
 			$a.addClass(activeClass);
 			
 			if(href == 'list') {
@@ -816,6 +1191,10 @@ function InputfieldImage($) {
 				size = getCookieData($inputfield, 'size');
 				setGridSize($inputfield, size, false);
 				setCookieData($inputfield, 'mode', 'grid');
+				if(hrefPrev == 'left') setTimeout(function() {
+					// because width/height aren't immediately available for img, so run again in this case
+					setGridSize($inputfield, size, false);
+				}, 100);
 			}
 
 			//hrefPrev = href; //hrefPrev == href && href != 'left' && href != 'list' ? '' : href;
@@ -1015,6 +1394,15 @@ function InputfieldImage($) {
 		}
 		
 		checkInputfieldWidth($inputfield);
+	
+		$inputfield.on('change', '.InputfieldFileActionSelect', function() {
+			var $note = $(this).next('.InputfieldFileActionNote');
+			if($(this).val().length) {
+				$note.fadeIn();
+			} else {
+				$note.hide();
+			}
+		}); 
 	}
 
 	/*** UPLOAD **********************************************************************************/
@@ -1127,6 +1515,10 @@ function InputfieldImage($) {
 			//setupDropHere();
 
 			$fileList.children().addClass('InputfieldFileItemExisting'); // identify items that are already there
+		
+			$inputfield.on('pwimageupload', function(event, data) {
+				traverseFiles([ data.file ], data.xhr); 
+			}); 
 
 			/**
 			 * Setup the .AjaxUploadDropHere 
@@ -1350,9 +1742,10 @@ function InputfieldImage($) {
 			 * 
 			 * @param file
 			 * @param extension (optional)
+			 * @param xhrsub (optional replacement for xhr)
 			 * 
 			 */
-			function uploadFile(file, extension) {
+			function uploadFile(file, extension, xhrsub) {
 			
 				var labels = ProcessWire.config.InputfieldImage.labels;
 				var filesizeStr = parseInt(file.size / 1024, 10) + '&nbsp;kB';
@@ -1433,7 +1826,11 @@ function InputfieldImage($) {
 				img.src = fileUrl;
 
 				// Uploading - for Firefox, Google Chrome and Safari
-				xhr = new XMLHttpRequest();
+				if(typeof xhrsub != "undefined") {
+					xhr = xhrsub;
+				} else {
+					xhr = new XMLHttpRequest();
+				}
 
 				// Update progress bar
 				function updateProgress(evt) {
@@ -1449,8 +1846,9 @@ function InputfieldImage($) {
 				// File uploaded: called for each file
 				xhr.addEventListener("load", function() {
 					xhr.getAllResponseHeaders();
-					var response = $.parseJSON(xhr.responseText),
-						wasZipFile = response.length > 1;
+					var response = $.parseJSON(xhr.responseText);
+					if(typeof response.ajaxResponse != "undefined") response = response.ajaxResponse; // ckeupload
+					var	wasZipFile = response.length > 1;
 					if(response.error !== undefined) response = [response];
 					// response = [{error: "Invalid"}];
 
@@ -1582,7 +1980,9 @@ function InputfieldImage($) {
 
 				// Here we go
 				function sendUpload(file, imageData) {
-					xhr.open("POST", postUrl, true);
+					if(typeof xhrsub == "undefined") {
+						xhr.open("POST", postUrl, true);
+					}
 					xhr.setRequestHeader("X-FILENAME", encodeURIComponent(file.name));
 					xhr.setRequestHeader("X-FIELDNAME", fieldName);
 					if(uploadReplace.item) xhr.setRequestHeader("X-REPLACENAME", uploadReplace.file); 
@@ -1606,8 +2006,9 @@ function InputfieldImage($) {
 				}
 				
 				updateProgress();
-				
-				if(useClientResize) {
+			
+				var ext = file.name.substring(file.name.lastIndexOf('.')+1).toLowerCase();
+				if(useClientResize && (ext == 'jpg' || ext == 'jpeg' || ext == 'png' || ext == 'gif')) {
 					var resizer = new PWImageResizer(resizeSettings);
 					$spinner.addClass('pw-resizing');
 					resizer.resize(file, function(imageData) {
@@ -1626,7 +2027,7 @@ function InputfieldImage($) {
 			 * @param files
 			 * 
 			 */
-			function traverseFiles(files) {
+			function traverseFiles(files, xhr) {
 
 				var toKilobyte = function(i) {
 					return parseInt(i / 1024, 10);
@@ -1654,6 +2055,9 @@ function InputfieldImage($) {
 
 						message = 'Filesize ' + filesizeKB + ' kb is too big. Maximum allowed is ' + maxFilesizeKB + ' kb';
 						$errorParent.append(errorItem(message, files[i].name));
+						
+					} else if(typeof xhr != "undefined") {
+						uploadFile(files[i], extension, xhr);
 
 					} else {
 						uploadFile(files[i], extension);

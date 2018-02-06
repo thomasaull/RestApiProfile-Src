@@ -75,6 +75,7 @@
  * @property PageRender $render May be used for field markup rendering like $page->render->title. #pw-advanced
  * @property bool $loaderCache Whether or not pages loaded as a result of this one may be cached by PagesLoaderCache. #pw-internal
  * 
+ * @property Page|null $_cloning Internal runtime use, contains Page being cloned (source), when this Page is the new copy (target). #pw-internal
  * @property bool|null $_hasAutogenName Internal runtime use, set by Pages class when page as auto-generated name. #pw-internal
  * @property bool|null $_forceSaveParents Internal runtime/debugging use, force a page to refresh its pages_parents DB entries on save(). #pw-internal
  * 
@@ -356,6 +357,16 @@ class Page extends WireData implements \Countable, WireMatchable {
 	 *
 	 */
 	protected $fieldDataQueue = array();
+
+	/**
+	 * Field names that should wakeup and sanitize on first access (populated when isLoaded==false)
+	 * 
+	 * These are most likely field names designated as autoload for this page. 
+	 * 
+	 * @var array of (field name => raw field value)
+	 * 
+	 */
+	protected $wakeupNameQueue = array();
 
 	/**
 	 * Is this a new page (not yet existing in the database)?
@@ -898,11 +909,8 @@ class Page extends WireData implements \Countable, WireMatchable {
 
 		// if the page is currently loading from the database, we assume that any set values are 'raw' and need to be woken up
 		if(!$this->isLoaded) {
-
-			// send the value to the Fieldtype to be woken up for storage in the page
-			// $value = $field->type->wakeupValue($this, $field, $value); 
-			$value = $field->type->_callHookMethod('wakeupValue', array($this, $field, $value));
-
+			// queue for wakeup and sanitize on first field access
+			$this->wakeupNameQueue[$key] = $key;
 			// page is currently loading, so we don't need to continue any further
 			return parent::set($key, $value); 
 		}
@@ -911,7 +919,17 @@ class Page extends WireData implements \Countable, WireMatchable {
 		if(is_null(parent::get($key))) {
 			// this field is not currently loaded. if the $load param is true, then ...
 			// retrieve old value first in case it's not autojoined so that change comparisons and save's work 
-			if($load && $this->isLoaded) $this->get($key); 
+			if($load) $this->get($key);
+			
+		} else if(isset($this->wakeupNameQueue[$key])) {
+			// autoload value: we don't yet have a "woke" value suitable for change detection, so let it wakeup
+			if($this->trackChanges() && $load) {
+				// if changes are being tracked, load existing value for comparison
+				$this->getFieldValue($key);
+			} else {
+				// if changes aren't being tracked, the existing value can be discarded
+				unset($this->wakeupNameQueue[$key]); 
+			}
 
 		} else {
 			// check if the field is corrupted
@@ -1287,7 +1305,17 @@ class Page extends WireData implements \Countable, WireMatchable {
 		$value = parent::get($key); 
 		if(!$field) return $value;  // likely a runtime field, not part of our data
 		$invokeArgument = '';
-		
+
+		if($value !== null && isset($this->wakeupNameQueue[$key])) {
+			$value = $field->type->_callHookMethod('wakeupValue', array($this, $field, $value));
+			$value = $field->type->sanitizeValue($this, $field, $value);
+			$trackChanges = $this->trackChanges(true);
+			$this->setTrackChanges(false);
+			parent::set($key, $value); 
+			$this->setTrackChanges($trackChanges);
+			unset($this->wakeupNameQueue[$key]); 
+		}
+
 		if($field->useRoles && $this->outputFormatting) {
 			// API access may be limited when output formatting is ON
 			if($field->flags & Field::flagAccessAPI) {
@@ -3519,6 +3547,7 @@ class Page extends WireData implements \Countable, WireMatchable {
 				if($value != null && is_object($value)) {
 					if(method_exists($value, 'uncache') && $value !== $this) $value->uncache(); 
 					parent::set($field->name, null); 
+					if(isset($this->wakeupNameQueue[$field->name])) unset($this->wakeupNameQueue[$field->name]); 
 				}
 			}
 		}

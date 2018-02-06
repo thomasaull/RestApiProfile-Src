@@ -95,7 +95,7 @@ $config->installed = 1512320449;
  * Installer: HTTP Hosts Whitelist
  * 
  */
-$config->httpHosts = array('pwrestapi.dev', 'www.pwrestapi.dev');
+$config->httpHosts = array('pwrestapi.test', 'www.pwrestapi.test');
 
 // JWT Secret
 // generate a new secret with the following lines:

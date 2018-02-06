@@ -63,6 +63,7 @@
  * @property bool $sessionChallenge Should login sessions have a challenge key? (for extra security, recommended) #pw-group-session
  * @property bool $sessionFingerprint Should login sessions be tied to IP and user agent? 0 or false: Fingerprint off. 1 or true: Fingerprint on with default/recommended setting (currently 10). 2: Fingerprint only the remote IP. 4: Fingerprint only the forwarded/client IP (can be spoofed). 8: Fingerprint only the useragent. 10: Fingerprint the remote IP and useragent (default). 12: Fingerprint the forwarded/client IP and useragent. 14: Fingerprint the remote IP, forwarded/client IP and useragent (all). #pw-group-session
  * @property int $sessionHistory Number of session entries to keep (default=0, which means off). #pw-group-session
+ * @property array $loginDisabledRoles Array of role name(s) or ID(s) of roles where login is disallowed. #pw-group-session
  * 
  * @property string $prependTemplateFile PHP file in /site/templates/ that will be loaded before each page's template file (default=none) #pw-group-template-files
  * @property string $appendTemplateFile PHP file in /site/templates/ that will be loaded after each page's template file (default=none) #pw-group-template-files
@@ -79,6 +80,7 @@
  * @property string $pageNumUrlPrefix Prefix used for pagination URLs. Default is "page", resulting in "/page1", "/page2", etc. #pw-group-URLs
  * @property array $pageNumUrlPrefixes Multiple prefixes that may be used for detecting pagination (internal use, for multi-language) #pw-group-URLs
  * @property int $maxUrlSegments Maximum number of extra stacked URL segments allowed in a page's URL (including page numbers)  #pw-group-URLs
+ * @property int $maxUrlSegmentLength Maximum length of any individual URL segment (default=128). #pw-group-URLs
  * @property int $maxUrlDepth Maximum URL/path slashes (depth) for request URLs. (Min=10, Max=60) #pw-group-URLs
  * @property string $wireInputOrder Order that variables with the $input API var are handled when you access $input->var. #pw-group-HTTP-and-input
  * 
@@ -113,6 +115,7 @@
  * 
  * @property array $pageList Settings specific to Page lists. #pw-group-modules
  * @property array $pageEdit Settings specific to Page editors. #pw-group-modules
+ * @property array $pageAdd Settings specific to Page adding. #pw-group-modules
  * @property string $moduleServiceURL URL where the modules web service can be accessed #pw-group-modules
  * @property string $moduleServiceKey API key for modules web service #pw-group-modules
  * @property bool $moduleCompile Allow use of compiled modules? #pw-group-modules
@@ -182,7 +185,7 @@ class Config extends WireData {
 	 * $url = $config->urls->admin; 
 	 * ~~~~~
 	 * 
-	 * @param string $for Predefined ProcessWire URLs property or module name
+	 * @param string|Wire $for Predefined ProcessWire URLs property or module name
 	 * @return string|null
 	 * 
 	 */
@@ -195,7 +198,7 @@ class Config extends WireData {
 	 * 
 	 * #pw-internal
 	 * 
-	 * @param string $for Predefined ProcessWire URLs property or module name
+	 * @param string|Wire $for Predefined ProcessWire URLs property or module name
 	 * @return null|string
 	 * 
 	 */
