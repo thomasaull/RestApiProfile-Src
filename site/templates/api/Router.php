@@ -117,7 +117,9 @@ class Router
     // Get Data:
     try {
       // merge url $vars with params
-      $vars = (object) array_merge((array) Router::params(), (array) $vars);
+      $vars = array_merge((array) Router::params(), (array) $vars);
+      // convert array to object:
+      $vars = json_decode(json_encode($vars));
       $data = $class::$method($vars);
 
       if(gettype($data) == "string") $return->message = $data;
