@@ -24,6 +24,7 @@ class Auth
       "iat" => $issuedAt, // issued at
       "nbf" => $notBefore, // valid not before
       "exp" => $expire, // token expire time
+      "userId" => wire('user')->id
     );
 
     $jwt = JWT::encode($token, wire('config')->jwtSecret);

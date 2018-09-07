@@ -118,8 +118,16 @@ class Router
     try {
       // merge url $vars with params
       $vars = array_merge((array) Router::params(), (array) $vars);
+
+      // merge in user id if present in JWT payload otherwise use ProcessWire $user (guest or logged in user)
+      $userId = wire('user')->id;
+      if(isset($decoded->userId)) $userId = $decoded->userId;
+      // merge with $vars
+      $vars = array_merge($vars, ['userId' => $userId]);
+
       // convert array to object:
       $vars = json_decode(json_encode($vars));
+
       $data = $class::$method($vars);
 
       if(gettype($data) == "string") $return->message = $data;
