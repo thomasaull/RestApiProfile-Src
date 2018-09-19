@@ -1,3 +1,8 @@
+# Update
+
+There is now a module for creation of a REST API in ProcessWire: https://github.com/thomasaull/RestApi
+Support and Updates for this site profile will be discontinued from now on
+
 # Welcome to ProcessWire 3.x 
 
 This document is in Markdown. An HTML formatted version of this document 
